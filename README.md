@@ -47,6 +47,23 @@ language/script when replying. Chat messages are saved locally in timestamp-
 named sessions and remain available after app restarts. The supplied
 `jarvis.jpeg` is used as the app background and launcher icon.
 
+The + button beside the message field offers exactly **Photo** and **File**.
+Photo opens the gallery; File opens Android's file manager. Selected images
+appear inline in the chat and are kept locally with chat history. Images are
+analyzed on-device with bundled ML Kit image labeling and text recognition.
+PDF pages (up to eight) are rendered locally for OCR, and supported text files
+(TXT, MD, CSV, JSON, XML, HTML, and LOG) are read locally. Extraction makes no
+API request, and image data is not sent to
+the AI provider. When you send an attachment, ISEN sends only its locally
+extracted text and image labels in the regular chat request.
+
 The Android app is separate from the Python desktop assistant in the repository
-root. It currently supports text chat and does not execute desktop-control
+root. It supports text and file attachments and does not execute desktop-control
 commands from the Python assistant.
+
+## Desktop image reading
+
+Install the project dependencies with `./scripts/deps.sh`, then enter a command
+such as `read image "/path/to/a photo.jpg"` in text mode. OCR is performed
+locally by RapidOCR and does not call Groq. `analyze image "/path/to/photo.jpg"`
+also asks Groq to interpret the extracted text; the image itself is not sent.

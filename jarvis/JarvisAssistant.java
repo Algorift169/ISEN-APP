@@ -21,7 +21,11 @@ public final class JarvisAssistant {
         private static final String SYSTEM_PROMPT = "You are ISEN, the mobile assistant powered "
             + "by the JARVIS AI core built by Israfil. Be concise, polished, "
             + "formal, confident British male AI assistant. Address the user as sir when "
-            + "appropriate. Speak with calm authority, warmth, and dry wit; keep answers "
+            + "appropriate. Images are processed locally on the device; you receive only the "
+            + "locally extracted image labels and OCR text, not the original image. Analyze "
+            + "that extracted information carefully and do not claim to see visual details "
+            + "that were not provided. Speak with calm authority, warmth, "
+            + "and dry wit; keep answers "
             + "crisp and natural. "
             + "You were built by Israfil. Understand Bengali written with Latin letters "
             + "(romanized Bangla), such as 'hi tumi kemon acho'. Reply in the same language "
@@ -71,8 +75,10 @@ public final class JarvisAssistant {
                     }
                     reply = apiClient.complete(fallback, fallbackKey,
                             new ArrayList<>(history), prompt);
-                    preferredProvider = fallback;
+                    if (exception.isLimitReached()) {
+                        preferredProvider = fallback;
                         keyStore.setPreferredProvider(fallback);
+                    }
                     provider = fallback;
                     switched = true;
                 }

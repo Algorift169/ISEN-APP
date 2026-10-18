@@ -12,6 +12,9 @@ const historyDrawer = document.getElementById("history-drawer");
 const sessionList = document.getElementById("session-list");
 let activeSessionId = 0;
 let voiceActive = false;
+let pendingAttachment = null;
+const attachmentPreview = document.getElementById("attachment-preview");
+const attachmentMenu = document.getElementById("attachment-menu");
 
 document.getElementById("settings-toggle").addEventListener("click", () => {
     settingsPanel.hidden = false;
@@ -45,13 +48,36 @@ document.getElementById("settings-form").addEventListener("submit", event => {
         document.getElementById("edit-openai-key").value);
 });
 document.getElementById("clear-keys").addEventListener("click", () => Isen.clearKeys());
+document.getElementById("attach-toggle").addEventListener("click", () => {
+    attachmentMenu.hidden = !attachmentMenu.hidden;
+});
+document.getElementById("attach-image").addEventListener("click", () => {
+    attachmentMenu.hidden = true;
+    Isen.pickImage();
+});
+document.getElementById("attach-file").addEventListener("click", () => {
+    attachmentMenu.hidden = true;
+    Isen.pickFile();
+});
 document.getElementById("chat-form").addEventListener("submit", event => {
     event.preventDefault();
     const field = document.getElementById("message");
-    const message = field.value.trim();
-    if (!message || sendButton.disabled) return;
+    let message = field.value.trim();
+    if ((!message && !pendingAttachment) || sendButton.disabled) return;
+    if (pendingAttachment && !pendingAttachment.ready) {
+        statusText.textContent = "Reading attachment on this device...";
+        return;
+    }
+    const attachment = pendingAttachment;
+    const displayContent = message || (attachment ? attachment.name : "");
+    if (attachment && attachment.text.trim()) {
+        const instruction = message || "Please analyze this attachment.";
+        message = `${instruction}\n\n[Locally extracted content from ${attachment.name}]\n${attachment.text}`;
+    }
     field.value = "";
-    sendMessage(message);
+    pendingAttachment = null;
+    attachmentPreview.hidden = true;
+    sendMessage(message, attachment ? attachment.preview : null, displayContent);
 });
 voiceToggle.addEventListener("click", toggleVoiceMode);
 
@@ -73,19 +99,39 @@ function createSession() {
     Isen.newSession();
 }
 
-function sendMessage(message) {
+function sendMessage(message, attachment = null, displayContent = message) {
     if (!message || sendButton.disabled) return;
-    addMessage(message, "user");
+    addMessage(displayContent, "user", attachment);
     sendButton.disabled = true;
     statusText.textContent = "ISEN is thinking...";
-    Isen.sendMessage(message);
+    if (attachment) {
+        Isen.sendAttachmentMessage(message, displayContent, attachment);
+    } else {
+        Isen.sendMessage(message);
+    }
 }
 
-function addMessage(text, role) {
+function addMessage(text, role, attachment = null) {
     emptyState.hidden = true;
     const element = document.createElement("div");
     element.className = `message ${role}`;
-    element.textContent = text;
+    if (attachment && attachment.startsWith("data:image/")) {
+        const image = document.createElement("img");
+        image.className = "message-attachment-image";
+        image.src = attachment;
+        image.alt = text ? `Attached image: ${text}` : "Attached image";
+        element.appendChild(image);
+    } else if (attachment) {
+        const file = document.createElement("span");
+        file.className = "message-attachment-file";
+        file.textContent = attachment.replace(/^file:/, "");
+        element.appendChild(file);
+    }
+    if (text) {
+        const messageText = document.createElement("div");
+        messageText.textContent = text;
+        element.appendChild(messageText);
+    }
     conversation.appendChild(element);
     window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
 }
@@ -144,7 +190,7 @@ function renderMessages(messages) {
     conversation.replaceChildren(emptyState);
     emptyState.hidden = messages.length > 0;
     for (const message of messages) {
-        addMessage(message.content, message.role);
+        addMessage(message.content, message.role, message.attachment || null);
     }
 }
 
@@ -170,7 +216,7 @@ window.onIsenReply = (reply, failed, provider, switched, sessionId) => {
     if (failed) {
         statusText.textContent = "Request could not be completed.";
     } else if (switched) {
-        statusText.textContent = `Rate limit reached. Switched to ${provider === "groq" ? "Groq" : "OpenAI"}.`;
+        statusText.textContent = `Using ${provider === "groq" ? "Groq" : "OpenAI"} for this reply.`;
     } else {
         statusText.textContent = "Ready when you are.";
     }
@@ -182,6 +228,66 @@ window.onIsenError = message => {
     } else {
         setupStatus.textContent = message;
     }
+};
+
+window.onAttachmentLoading = (name, id) => {
+    pendingAttachment = { name, id, text: "", preview: null, ready: false };
+    attachmentPreview.textContent = `Reading ${name} on this device...`;
+    attachmentPreview.hidden = false;
+    statusText.textContent = "Extracting attachment content locally; nothing is uploaded.";
+};
+
+window.onAttachmentPreviewReady = (name, preview, id) => {
+    if (!pendingAttachment || Number(pendingAttachment.id) !== Number(id)) return;
+    pendingAttachment.preview = preview;
+    pendingAttachment.ready = true;
+    pendingAttachment.analyzing = true;
+    renderAttachmentPreview();
+    statusText.textContent = "Photo attached. You can send it now while local reading continues.";
+};
+
+window.onAttachmentReady = (name, text, preview, id) => {
+    if (!pendingAttachment || Number(pendingAttachment.id) !== Number(id)) return;
+    pendingAttachment = { ...pendingAttachment, name, text, preview, ready: true, analyzing: false };
+    renderAttachmentPreview();
+    statusText.textContent = "Attachment ready to send.";
+};
+
+function renderAttachmentPreview() {
+    attachmentPreview.replaceChildren();
+    if (pendingAttachment.preview && pendingAttachment.preview.startsWith("data:image/")) {
+        const image = document.createElement("img");
+        image.src = pendingAttachment.preview;
+        image.alt = `Selected image: ${pendingAttachment.name}`;
+        attachmentPreview.appendChild(image);
+    }
+    const label = document.createElement("span");
+    label.textContent = `${pendingAttachment.name} · ${pendingAttachment.analyzing ? "reading" : "ready"}`;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "attachment-remove";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", "Remove attachment");
+    remove.addEventListener("click", () => {
+        pendingAttachment = null;
+        attachmentPreview.hidden = true;
+    });
+    attachmentPreview.append(label, remove);
+    attachmentPreview.hidden = false;
+}
+
+window.onAttachmentError = (message, id) => {
+    if (!pendingAttachment || Number(pendingAttachment.id) !== Number(id)) return;
+    if (pendingAttachment.preview && pendingAttachment.preview.startsWith("data:image/")) {
+        pendingAttachment.ready = true;
+        pendingAttachment.analyzing = false;
+        renderAttachmentPreview();
+        statusText.textContent = `${message} The photo is attached and can still be sent.`;
+        return;
+    }
+    pendingAttachment = null;
+    attachmentPreview.hidden = true;
+    statusText.textContent = message;
 };
 
 window.onVoiceStatus = message => {

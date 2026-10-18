@@ -17,7 +17,12 @@ android {
         applicationId 'org.jarvis.mobile'
         minSdk 23
         targetSdk 35
-        versionCode 1
-        versionName '1.0'
+        versionCode 11
+        versionName '2.0'
     }
+}
+
+dependencies {
+    implementation 'com.google.mlkit:image-labeling:17.0.9'
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
 }

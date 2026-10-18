@@ -31,6 +31,7 @@ public final class JarvisApiClient {
                     || normalizedMessage.contains("rate limit")
                     || normalizedMessage.contains("quota");
         }
+
     }
 
     public String complete(String provider, String apiKey, List<JSONObject> history,

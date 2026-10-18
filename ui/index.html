@@ -47,11 +47,17 @@
     </main>
     <footer class="composer-wrap">
         <form id="chat-form" class="composer">
+            <button class="attach-button" id="attach-toggle" type="button" aria-label="Add attachment" title="Add attachment">＋</button>
+            <div class="attachment-preview" id="attachment-preview" hidden></div>
             <label class="sr-only" for="message">Message ISEN</label>
             <textarea id="message" rows="1" maxlength="4000" placeholder="Ask ISEN anything…"></textarea>
             <div class="compose-actions">
                 <button class="send-button" id="send" type="submit" aria-label="Send message">↑</button>
                 <button class="voice-button" id="voice-toggle" type="button" aria-label="Start voice chat" title="Start voice chat">🎙</button>
+            </div>
+            <div class="attachment-menu" id="attachment-menu" hidden>
+                <button type="button" id="attach-image">Photo</button>
+                <button type="button" id="attach-file">File</button>
             </div>
         </form>
     </footer>

@@ -73,9 +73,19 @@ h1 { margin: 0; font-size: 32px; line-height: 1.2; font-weight: 500; }
 .message.user { align-self: flex-end; color: #071a21; background: var(--cyan); border-color: var(--cyan); border-radius: 14px 4px 14px 14px; }
 .message.assistant { align-self: flex-start; }
 .message.error { color: var(--warning); border-color: #85594b; background: #302320ed; }
+.message-attachment-image { display: block; width: min(100%, 320px); max-height: 320px; margin: 0 0 8px; object-fit: contain; border-radius: 8px; }
+.message-attachment-file { display: block; margin: 0 0 8px; padding: 8px 10px; color: #071a21; background: #ffffff88; border-radius: 4px; font-size: 13px; overflow-wrap: anywhere; }
 .composer-wrap { position: fixed; right: 0; bottom: 0; left: 0; padding: 12px 20px max(16px, env(safe-area-inset-bottom)); background: linear-gradient(180deg, transparent, #06111af2 28%); }
-.composer { width: min(100%, 720px); margin: 0 auto; display: flex; align-items: flex-end; gap: 8px; padding: 8px; border: 1px solid #8ca3aa; border-radius: 16px; background: #101a22ed; backdrop-filter: blur(10px); }
+.composer { position: relative; width: min(100%, 720px); margin: 0 auto; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding: 8px; border: 1px solid #8ca3aa; border-radius: 16px; background: #101a22ed; backdrop-filter: blur(10px); }
 textarea { flex: 1; min-width: 0; min-height: 42px; max-height: 120px; padding: 11px 8px; resize: none; color: var(--ink); background: transparent; border: 0; outline: 0; font-size: 15px; line-height: 1.4; }
+.attach-button { flex: 0 0 42px; width: 42px; height: 42px; color: var(--cyan); background: transparent; border: 1px solid transparent; border-radius: 12px; font-size: 25px; }
+.attach-button:active { border-color: #7de7f788; background: #7de7f733; }
+.attachment-preview { order: -1; flex: 0 0 100%; min-width: 0; display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 3px 8px 7px; color: #cde4e6; font-size: 12px; overflow-wrap: anywhere; }
+.attachment-preview img { width: 52px; height: 52px; flex: 0 0 52px; object-fit: cover; border: 1px solid #66808a; border-radius: 4px; }
+.attachment-menu { position: absolute; z-index: 4; bottom: calc(100% + 8px); left: 0; width: 190px; padding: 5px; border: 1px solid #78909a; border-radius: 8px; background: #101a22f5; box-shadow: 0 12px 36px #0009; }
+.attachment-menu button { display: block; width: 100%; min-height: 42px; padding: 0 12px; color: var(--ink); background: transparent; border: 0; border-radius: 4px; text-align: left; }
+.attachment-menu button:active { background: #7de7f722; }
+.attachment-remove { flex: 0 0 30px; width: 30px; height: 30px; color: var(--muted); background: transparent; border: 0; font-size: 22px; }
 .compose-actions { flex: 0 0 auto; display: flex; flex-direction: row; align-items: flex-end; gap: 4px; }
 .send-button { width: 42px; height: 42px; border: 0; border-radius: 12px; color: #071a21; background: var(--cyan); font-size: 24px; }
 .send-button:disabled { opacity: .5; }

@@ -4,13 +4,21 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.pdf.PdfRenderer;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.ParcelFileDescriptor;
+import android.provider.OpenableColumns;
+import android.util.Log;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -25,12 +33,37 @@ import org.jarvis.mobile.jarvis.ChatSessionActions;
 import org.jarvis.mobile.jarvis.ChatSessionStore;
 import org.jarvis.mobile.jarvis.JarvisAssistant;
 
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.TextRecognizer;
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
+import com.google.mlkit.vision.label.ImageLabel;
+import com.google.mlkit.vision.label.ImageLabeler;
+import com.google.mlkit.vision.label.ImageLabeling;
+import com.google.mlkit.vision.label.defaults.ImageLabelerOptions;
+import com.google.android.gms.tasks.Tasks;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
     private static final int RECORD_AUDIO_REQUEST = 41;
+    private static final int IMAGE_PICK_REQUEST = 42;
+    private static final int TEXT_PICK_REQUEST = 43;
+    private static final int MAX_ATTACHMENT_CHARS = 50000;
+    private static final int MAX_IMAGE_BYTES = 32 * 1024 * 1024;
+    private static final String TAG = "ISEN";
+    private long attachmentSequence;
     private WebView webView;
     private ApiKeyStore keyStore;
     private ChatSessionStore sessionStore;
@@ -38,10 +71,21 @@ public class MainActivity extends Activity {
     private JarvisAssistant assistant;
     private volatile long currentSessionId;
     private final Handler voiceHandler = new Handler(Looper.getMainLooper());
+    private final ExecutorService attachmentExecutor = Executors.newSingleThreadExecutor();
     private SpeechRecognizer speechRecognizer;
     private JarvisSpeechOutput speechOutput;
     private boolean voiceModeActive;
     private String speechNotice = "";
+
+    private static final class PreparedImage {
+        final Bitmap bitmap;
+        final String preview;
+
+        PreparedImage(Bitmap bitmap, String preview) {
+            this.bitmap = bitmap;
+            this.preview = preview;
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -124,6 +168,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         voiceModeActive = false;
         voiceHandler.removeCallbacksAndMessages(null);
+        attachmentExecutor.shutdownNow();
         if (speechRecognizer != null) {
             speechRecognizer.destroy();
         }
@@ -219,21 +264,22 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void sendMessage(String message) {
-            long sessionId = currentSessionId;
-            sessionStore.addMessage(sessionId, "user", message);
-            runOnUiThread(() -> callPage("onSessionsState",
-                    sessionStore.getSessions(currentSessionId).toString()));
-            assistant.sendMessage(message, (reply, failed, provider, switched) -> {
-                if (sessionStore.hasSession(sessionId)) {
-                    sessionStore.addMessage(sessionId, "assistant", reply);
-                }
-                runOnUiThread(() -> {
-                    callPage("onIsenReply", quote(reply) + "," + failed + ","
-                            + quote(provider) + "," + switched + "," + sessionId);
-                    callPage("onSessionsState", sessionStore.getSessions(currentSessionId).toString());
-                    speakReply(reply);
-                });
-            });
+            sendChatMessage(message, message, null);
+        }
+
+        @JavascriptInterface
+        public void sendAttachmentMessage(String message, String displayContent, String attachment) {
+            sendChatMessage(message, displayContent, attachment);
+        }
+
+        @JavascriptInterface
+        public void pickImage() {
+            runOnUiThread(() -> openAttachmentPicker(IMAGE_PICK_REQUEST, "image/*"));
+        }
+
+        @JavascriptInterface
+        public void pickFile() {
+            runOnUiThread(() -> openAttachmentPicker(TEXT_PICK_REQUEST, "*/*"));
         }
 
         @JavascriptInterface
@@ -257,6 +303,294 @@ public class MainActivity extends Activity {
         public void stopVoiceMode() {
             runOnUiThread(MainActivity.this::stopVoiceMode);
         }
+    }
+
+    private void sendChatMessage(String message, String displayContent, String attachment) {
+        long sessionId = currentSessionId;
+        sessionStore.addMessage(sessionId, "user", message, displayContent, attachment);
+        runOnUiThread(() -> callPage("onSessionsState",
+                sessionStore.getSessions(currentSessionId).toString()));
+        assistant.sendMessage(message, (reply, failed, provider, switched) -> {
+            if (sessionStore.hasSession(sessionId)) {
+                sessionStore.addMessage(sessionId, "assistant", reply);
+            }
+            runOnUiThread(() -> {
+                callPage("onIsenReply", quote(reply) + "," + failed + ","
+                        + quote(provider) + "," + switched + "," + sessionId);
+                callPage("onSessionsState", sessionStore.getSessions(currentSessionId).toString());
+                speakReply(reply);
+            });
+        });
+    }
+
+    private void openAttachmentPicker(int requestCode, String mimeType) {
+        Intent intent = requestCode == IMAGE_PICK_REQUEST
+            ? new Intent(Intent.ACTION_GET_CONTENT)
+            : new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(mimeType);
+        startActivityForResult(Intent.createChooser(intent,
+            requestCode == IMAGE_PICK_REQUEST ? "Choose a photo" : "Choose a file"), requestCode);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if ((requestCode != IMAGE_PICK_REQUEST && requestCode != TEXT_PICK_REQUEST)
+                || resultCode != RESULT_OK || data == null || data.getData() == null) {
+            return;
+        }
+        Uri uri = data.getData();
+        String name = getAttachmentName(uri);
+        long attachmentId = ++attachmentSequence;
+        runOnUiThread(() -> callPage("onAttachmentLoading", quote(name) + "," + attachmentId));
+        String mimeType = getContentResolver().getType(uri);
+        if (requestCode == IMAGE_PICK_REQUEST || (mimeType != null && mimeType.startsWith("image/"))) {
+            attachmentExecutor.execute(() -> readImageText(uri, name, attachmentId));
+        } else if ("application/pdf".equals(mimeType)
+                || name.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
+            attachmentExecutor.execute(() -> readPdf(uri, name, attachmentId));
+        } else if (requestCode == TEXT_PICK_REQUEST) {
+            attachmentExecutor.execute(() -> readTextFile(uri, name, attachmentId));
+        } else {
+            showAttachmentError("Choose a photo, PDF, or supported text file.", attachmentId);
+        }
+    }
+
+    private String getAttachmentName(Uri uri) {
+        try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (nameIndex >= 0) {
+                    return cursor.getString(nameIndex);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return "Attachment";
+    }
+
+    private void readImageText(Uri uri, String name, long attachmentId) {
+        PreparedImage prepared;
+        try {
+            prepared = createPreparedImage(uri);
+        } catch (Exception exception) {
+            Log.e(TAG, "Unable to decode selected image " + name, exception);
+            String detail = exception.getMessage();
+            showAttachmentError("Could not decode " + name + ". "
+                + (detail == null || detail.isEmpty() ? "Choose a standard PNG or JPG image." : detail),
+                attachmentId);
+            return;
+        }
+
+        String preview = prepared.preview;
+        runOnUiThread(() -> callPage("onAttachmentPreviewReady",
+            quote(name) + "," + quote(preview) + "," + attachmentId));
+        try {
+            InputImage image = InputImage.fromBitmap(prepared.bitmap, 0);
+            Bitmap imageBitmap = prepared.bitmap;
+            TextRecognizer recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+            recognizer.process(image)
+                    .addOnSuccessListener(result -> {
+                        recognizer.close();
+                        String text = result.getText().trim();
+                        readImageLabels(image, name, text, preview, imageBitmap, attachmentId);
+                    })
+                    .addOnFailureListener(exception -> {
+                        recognizer.close();
+                        readImageLabels(image, name, "", preview, imageBitmap, attachmentId);
+                    });
+        } catch (Exception exception) {
+            Log.e(TAG, "Unable to start local image recognition for " + name, exception);
+            finishImageAnalysis(name, "", Collections.emptyList(), preview, prepared.bitmap,
+                    attachmentId);
+        }
+    }
+
+    private void readImageLabels(InputImage image, String name, String recognizedText,
+                                 String preview, Bitmap bitmap, long attachmentId) {
+        try {
+            ImageLabeler labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS);
+            labeler.process(image)
+                    .addOnSuccessListener(labels -> {
+                        labeler.close();
+                        ArrayList<String> descriptions = new ArrayList<>();
+                        for (ImageLabel label : labels) {
+                            if (label.getConfidence() >= 0.5f && descriptions.size() < 8) {
+                                descriptions.add(label.getText());
+                            }
+                        }
+                        finishImageAnalysis(name, recognizedText, descriptions, preview, bitmap,
+                                attachmentId);
+                    })
+                    .addOnFailureListener(exception -> {
+                        labeler.close();
+                        finishImageAnalysis(name, recognizedText, Collections.emptyList(), preview,
+                                bitmap, attachmentId);
+                    });
+        } catch (Exception exception) {
+            finishImageAnalysis(name, recognizedText, Collections.emptyList(), preview, bitmap,
+                    attachmentId);
+        }
+    }
+
+    private void finishImageAnalysis(String name, String recognizedText, List<String> labels,
+                                     String preview, Bitmap bitmap, long attachmentId) {
+        StringBuilder analysis = new StringBuilder();
+        if (!labels.isEmpty()) {
+            analysis.append("Image labels: ");
+            for (int index = 0; index < labels.size(); index++) {
+                if (index > 0) {
+                    analysis.append(", ");
+                }
+                analysis.append(labels.get(index));
+            }
+            analysis.append('\n');
+        }
+        if (!recognizedText.isEmpty()) {
+            analysis.append("Text in image:\n").append(recognizedText);
+        }
+        if (analysis.length() == 0) {
+            analysis.append("No readable text or recognizable labels were detected locally.");
+        }
+        String extractedContent = limitAttachment(analysis.toString());
+        String previewDataUrl = preview;
+        if (!bitmap.isRecycled()) {
+            bitmap.recycle();
+        }
+        runOnUiThread(() -> callPage("onAttachmentReady",
+            quote(name) + "," + quote(extractedContent) + "," + quote(previewDataUrl)
+                + "," + attachmentId));
+    }
+
+        private void readPdf(Uri uri, String name, long attachmentId) {
+        try (ParcelFileDescriptor descriptor = getContentResolver().openFileDescriptor(uri, "r");
+             PdfRenderer renderer = new PdfRenderer(descriptor)) {
+            TextRecognizer recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+            StringBuilder extracted = new StringBuilder();
+            String preview = "";
+            int pageCount = Math.min(renderer.getPageCount(), 8);
+            for (int pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+                PdfRenderer.Page page = renderer.openPage(pageIndex);
+                float scale = Math.min(1.5f, 1200f / Math.max(page.getWidth(), page.getHeight()));
+                Bitmap bitmap = Bitmap.createBitmap(Math.max(1, (int) (page.getWidth() * scale)),
+                        Math.max(1, (int) (page.getHeight() * scale)), Bitmap.Config.ARGB_8888);
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+                page.close();
+                if (pageIndex == 0) {
+                    preview = bitmapToDataUrl(bitmap);
+                }
+                String pageText = Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)))
+                        .getText().trim();
+                if (!pageText.isEmpty()) {
+                    extracted.append("Page ").append(pageIndex + 1).append(":\n")
+                            .append(pageText).append('\n');
+                }
+                bitmap.recycle();
+            }
+            recognizer.close();
+            if (pageCount < renderer.getPageCount()) {
+                extracted.append("[Only the first ").append(pageCount).append(" pages were read.]\n");
+            }
+            String content = extracted.toString().trim();
+            if (content.isEmpty()) {
+                content = "No readable text was detected in the first " + pageCount + " PDF pages.";
+            }
+            String extractedContent = limitAttachment(content);
+            String previewDataUrl = preview;
+            runOnUiThread(() -> callPage("onAttachmentReady",
+                    quote(name) + "," + quote(extractedContent) + "," + quote(previewDataUrl)
+                        + "," + attachmentId));
+        } catch (Exception exception) {
+                showAttachmentError("Could not read " + name + " on this device.", attachmentId);
+        }
+    }
+
+    private PreparedImage createPreparedImage(Uri uri) throws IOException {
+        ByteArrayOutputStream imageBytes = new ByteArrayOutputStream();
+        try (InputStream stream = getContentResolver().openInputStream(uri)) {
+            if (stream == null) {
+                throw new IOException("The selected photo provider returned no data.");
+            }
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = stream.read(buffer)) != -1) {
+                if (imageBytes.size() + count > MAX_IMAGE_BYTES) {
+                    throw new IOException("The selected image exceeds the 32 MB local processing limit.");
+                }
+                imageBytes.write(buffer, 0, count);
+            }
+        }
+        byte[] encodedImage = imageBytes.toByteArray();
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(encodedImage, 0, encodedImage.length, bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            throw new IOException("Android could not read this image format. Try sharing the original photo, not a preview.");
+        }
+        int sampleSize = 1;
+        while ((bounds.outWidth / sampleSize > 1600
+                || bounds.outHeight / sampleSize > 1600) && sampleSize < (1 << 30)) {
+            sampleSize <<= 1;
+        }
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = Math.max(1, sampleSize);
+        Bitmap bitmap = BitmapFactory.decodeByteArray(encodedImage, 0, encodedImage.length, options);
+        if (bitmap == null) {
+            throw new IOException("Android could not decode this image. Try a standard PNG or JPG.");
+        }
+        return new PreparedImage(bitmap, bitmapToDataUrl(bitmap));
+    }
+
+    private String bitmapToDataUrl(Bitmap bitmap) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 72, output);
+        return "data:image/jpeg;base64," + Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP);
+    }
+
+    private void readTextFile(Uri uri, String name, long attachmentId) {
+        String mimeType = getContentResolver().getType(uri);
+        String lowerName = name.toLowerCase(Locale.ROOT);
+        boolean supportedExtension = lowerName.endsWith(".txt") || lowerName.endsWith(".md")
+                || lowerName.endsWith(".csv") || lowerName.endsWith(".json")
+                || lowerName.endsWith(".xml") || lowerName.endsWith(".html")
+                || lowerName.endsWith(".log");
+        if ((mimeType == null || !mimeType.startsWith("text/")) && !supportedExtension) {
+                showAttachmentError("Choose an image or a text file (TXT, MD, CSV, JSON, XML, HTML, or LOG).",
+                    attachmentId);
+            return;
+        }
+        try (InputStream stream = getContentResolver().openInputStream(uri);
+             BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+            StringBuilder content = new StringBuilder();
+            char[] buffer = new char[4096];
+            int count;
+            while ((count = reader.read(buffer)) != -1 && content.length() < MAX_ATTACHMENT_CHARS) {
+                int remaining = MAX_ATTACHMENT_CHARS - content.length();
+                content.append(buffer, 0, Math.min(count, remaining));
+            }
+            String text = content.toString().trim();
+            if (text.isEmpty()) {
+                showAttachmentError(name + " is empty.", attachmentId);
+            } else {
+                String extractedContent = limitAttachment(text);
+                runOnUiThread(() -> callPage("onAttachmentReady", quote(name) + ","
+                    + quote(extractedContent) + "," + quote("file:" + name) + "," + attachmentId));
+            }
+        } catch (Exception exception) {
+            showAttachmentError("Could not read " + name + ".", attachmentId);
+        }
+    }
+
+    private void showAttachmentError(String message, long attachmentId) {
+        runOnUiThread(() -> callPage("onAttachmentError", quote(message) + "," + attachmentId));
+    }
+
+    private String limitAttachment(String text) {
+        if (text.length() <= MAX_ATTACHMENT_CHARS) {
+            return text;
+        }
+        return text.substring(0, MAX_ATTACHMENT_CHARS) + "\n[Content truncated]";
     }
 
     @Override
