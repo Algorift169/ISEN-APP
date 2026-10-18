@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#101719">
+    <link rel="stylesheet" href="style.css">
+    <title>ISEN</title>
+</head>
+<body>
+<section class="loading-screen" id="loading-screen">Starting ISEN...</section>
+<section class="setup-screen" id="setup-screen" hidden>
+    <div class="setup-content">
+        <div class="identity"><span class="signal" aria-hidden="true"></span><span>ISEN</span></div>
+        <p class="eyebrow">FIRST-TIME SETUP</p>
+        <h1>Connect your keys.</h1>
+        <p class="setup-copy">Add both API keys to enable automatic provider switching.</p>
+        <form id="setup-form" class="key-form">
+            <label for="setup-groq-key">Groq API key</label>
+            <a href="https://console.groq.com/keys">Get a Groq key ↗</a>
+            <input id="setup-groq-key" type="password" autocomplete="off" required placeholder="Paste Groq key">
+            <label for="setup-openai-key">OpenAI API key</label>
+            <a href="https://platform.openai.com/api-keys">Get an OpenAI key ↗</a>
+            <input id="setup-openai-key" type="password" autocomplete="off" required placeholder="Paste OpenAI key">
+            <p class="hint" id="setup-status">Keys are encrypted and saved on this device.</p>
+            <button class="primary-button" id="setup-save" type="submit">Save keys and continue</button>
+        </form>
+    </div>
+</section>
+<div class="app-screen" id="app-screen" hidden>
+    <header class="topbar">
+        <button class="icon-button" id="sessions-open" type="button" aria-label="Chat sessions" title="Chat sessions">☷</button>
+        <div class="identity"><span class="signal" aria-hidden="true"></span><span>ISEN</span></div>
+        <button class="icon-button" id="new-session" type="button" aria-label="New chat" title="New chat">＋</button>
+        <button class="text-button" id="settings-toggle" type="button">API KEYS</button>
+    </header>
+    <main>
+        <section class="intro" aria-labelledby="title">
+            <p class="eyebrow">PERSONAL ASSISTANT</p>
+            <h1 id="title">At your service.</h1>
+            <p class="status" id="status">Ready when you are.</p>
+            <p class="active-session-title" id="active-session-title"></p>
+        </section>
+        <section class="conversation" id="conversation" aria-live="polite" aria-label="Conversation">
+            <div class="empty-state" id="empty-state">Your conversation will appear here.</div>
+        </section>
+    </main>
+    <footer class="composer-wrap">
+        <form id="chat-form" class="composer">
+            <label class="sr-only" for="message">Message ISEN</label>
+            <textarea id="message" rows="1" maxlength="4000" placeholder="Ask ISEN anything…"></textarea>
+            <div class="compose-actions">
+                <button class="send-button" id="send" type="submit" aria-label="Send message">↑</button>
+                <button class="voice-button" id="voice-toggle" type="button" aria-label="Start voice chat" title="Start voice chat">🎙</button>
+            </div>
+        </form>
+    </footer>
+    <section class="history-drawer" id="history-drawer" aria-label="Chat sessions" hidden>
+        <div class="section-heading">
+            <h2>Previous chats</h2>
+            <button class="close-button" id="history-close" type="button" aria-label="Close chat sessions">×</button>
+        </div>
+        <button class="primary-button new-chat-button" id="history-new-session" type="button">＋ New chat</button>
+        <div class="session-list" id="session-list"></div>
+    </section>
+    <section class="settings" id="settings" aria-label="API key settings" hidden>
+        <div class="section-heading">
+            <h2>API keys</h2>
+            <button class="close-button" id="settings-close" type="button" aria-label="Close settings">×</button>
+        </div>
+        <form id="settings-form" class="key-form">
+            <label for="edit-groq-key">Groq API key</label>
+            <a href="https://console.groq.com/keys">Open Groq API keys ↗</a>
+            <input id="edit-groq-key" type="password" autocomplete="off" placeholder="Leave blank to keep saved key">
+            <label for="edit-openai-key">OpenAI API key</label>
+            <a href="https://platform.openai.com/api-keys">Open OpenAI API keys ↗</a>
+            <input id="edit-openai-key" type="password" autocomplete="off" placeholder="Leave blank to keep saved key">
+            <p class="hint" id="key-state">Saved keys are encrypted on this device.</p>
+            <div class="settings-actions">
+                <button class="primary-button" id="save-keys" type="submit">Save changes</button>
+                <button class="text-button danger" id="clear-keys" type="button">Clear saved keys</button>
+            </div>
+        </form>
+    </section>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

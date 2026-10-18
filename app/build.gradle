@@ -1,0 +1,23 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'org.jarvis.mobile'
+    compileSdk 35
+
+    sourceSets {
+        main {
+            java.srcDirs += ['../api', '../jarvis']
+            assets.srcDirs += ['../ui']
+        }
+    }
+
+    defaultConfig {
+        applicationId 'org.jarvis.mobile'
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+    }
+}
